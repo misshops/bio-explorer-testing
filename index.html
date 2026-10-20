@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bio-Explorer: Interactive Mechanics Prototype</title>
+    <!-- Phaser 3 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        #game-container {
+            border: 4px solid #3b82f6;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            position: relative;
+        }
+        .instructions {
+            margin-top: 15px;
+            max-width: 800px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        .badge {
+            background-color: #1e293b;
+            border: 1px solid #475569;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #38bdf8;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1 style="margin: 0 0 10px 0; color: #38bdf8;">Bio-Explorer: Prototype</h1>
+    <div id="game-container"></div>
+    
+    <div class="instructions">
+        <p><strong>Controls:</strong> Use <span class="badge">Arrow Keys</span> or <span class="badge">WASD</span> to walk around. Walk into colored stations to trigger interactive non-MC puzzles!</p>
+        <p>Featured Mechanics: 1. Drag & Drop | 2. Sequence Ordering | 3. Slider Balancing | 4. Environmental Lever | 5. Spot the Anomaly | 6. Lock & Key | 7. Diagnostic Interview</p>
+    </div>
+
+<script>
+// --- PHASER GAME CONFIGURATION ---
+const config = {
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    parent: 'game-container',
+    physics: {
+        default: 'arcade',
+        arcade: { debug: false }
+    },
+    scene: {
+        preload: preload,
+        create: create,
+        update: update
+    }
+};
+
+const game = new Phaser.Game(config);
+
+let player;
+let cursors;
+let interactionText;
+let overlayGraphics;
+let activeModal = false;
+let currentMechanic = null;
+
+function preload() {
+    // Generate simple geometric shapes as placeholder sprites
+    const graphics = this.add.graphics();
+    
+    // Player Sprite (Green Circle)
+    graphics.fillStyle(0x10b981, 1);
+    graphics.fillCircle(16, 16, 16);
+    graphics.generateTexture('player', 32, 32);
+    graphics.clear();
+
+    // Station Sprite (Blue Box)
+    graphics.fillStyle(0x3b82f6, 1);
+    graphics.fillRect(0, 0, 40, 40);
+    graphics.generateTexture('station', 40, 40);
+    graphics.clear();
+}
+
+function create() {
+    // 1. Create World Grid Background
+    const grid = this.add.grid(400, 300, 800, 600, 40, 40, 0x1e293b, 1, 0x334155, 1);
+
+    // 2. Add Player
+    player = this.physics.add.sprite(400, 300, 'player');
+    player.setCollideWorldBounds(true);
+
+    // 3. Define the 7 Mechanic Stations
+    const stationsData = [
+        { x: 100, y: 100, name: "1. Drag & Drop Membrane", type: "drag_drop", color: 0xec4899 },
+        { x: 300, y: 100, name: "2. Protein Synthesis Sequence", type: "sequence", color: 0x8b5cf6 },
+        { x: 500, y: 100, name: "3. Homeostasis Sliders", type: "slider", color: 0x06b6d4 },
+        { x: 700, y: 100, name: "4. Environmental Lever", type: "environmental", color: 0xeab308 },
+        { x: 100, y: 500, name: "5. Spot the Anomaly", type: "spot_anomaly", color: 0xf97316 },
+        { x: 400, y: 500, name: "6. Receptor Lock & Key", type: "lock_key", color: 0x84cc16 },
+        { x: 700, y: 500, name: "7. Diagnostic Interview", type: "dialogue", color: 0xa855f7 }
+    ];
+
+    const stationsGroup = this.physics.add.staticGroup();
+
+    stationsData.forEach(s => {
+        const station = stationsGroup.create(s.x, s.y, 'station').setTint(s.color);
+        station.setData('type', s.type);
+        station.setData('name', s.name);
+        
+        // Label above station
+        this.add.text(s.x, s.y - 30, s.name, {
+            font: '12px Arial',
+            fill: '#ffffff',
+            backgroundColor: '#00000088',
+            padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+    });
+
+    // 4. Keyboard Controls
+    cursors = this.input.keyboard.createCursorKeys();
+    this.wasd = {
+        up: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+        down: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+        left: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+        right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D)
+    };
+
+    // 5. Overlap Detection
+    this.physics.add.overlap(player, stationsGroup, triggerMechanic, null, this);
+
+    // UI Overlay Container
+    interactionText = this.add.text(400, 30, "Explore the stations to test non-MC interactions!", {
+        font: '16px Arial',
+        fill: '#38bdf8'
+    }).setOrigin(0.5);
+}
+
+function update() {
+    if (activeModal) {
+        player.setVelocity(0, 0);
+        return;
+    }
+
+    // Movement Logic
+    const speed = 200;
+    player.setVelocity(0);
+
+    if (cursors.left.isDown || this.wasd.left.isDown) player.setVelocityX(-speed);
+    else if (cursors.right.isDown || this.wasd.right.isDown) player.setVelocityX(speed);
+
+    if (cursors.up.isDown || this.wasd.up.isDown) player.setVelocityY(-speed);
+    else if (cursors.down.isDown || this.wasd.down.isDown) player.setVelocityY(speed);
+}
+
+// --- MECHANIC ROUTER ---
+function triggerMechanic(player, station) {
+    if (activeModal) return;
+    
+    activeModal = true;
+    const type = station.getData('type');
+    const name = station.getData('name');
+
+    // Create Modal Backdrop
+    overlayGraphics = this.add.graphics();
+    overlayGraphics.fillStyle(0x0f172a, 0.95);
+    overlayGraphics.fillRect(50, 50, 700, 500);
+    overlayGraphics.lineStyle(2, 0x38bdf8, 1);
+    overlayGraphics.strokeRect(50, 50, 700, 500);
+
+    // Title
+    const title = this.add.text(400, 80, name, { font: 'bold 20px Arial', fill: '#38bdf8' }).setOrigin(0.5);
+    
+    // Close Button
+    const closeBtn = this.add.text(720, 70, "X", { font: 'bold 20px Arial', fill: '#ef4444' })
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => closeModal.call(this, elementsToDestroy));
+
+    let elementsToDestroy = [overlayGraphics, title, closeBtn];
+
+    // Route to specific mechanic builder
+    switch(type) {
+        case 'drag_drop': buildDragDrop(this, elementsToDestroy); break;
+        case 'sequence': buildSequence(this, elementsToDestroy); break;
+        case 'slider': buildSlider(this, elementsToDestroy); break;
+        case 'environmental': buildEnvironmental(this, elementsToDestroy); break;
+        case 'spot_anomaly': buildSpotAnomaly(this, elementsToDestroy); break;
+        case 'lock_key': buildLockKey(this, elementsToDestroy); break;
+        case 'dialogue': buildDialogue(this, elementsToDestroy); break;
+    }
+}
+
+function closeModal(elements) {
+    elements.forEach(el => el.destroy());
+    activeModal = false;
+    player.setPosition(player.x, player.y + 40); // Push back slightly to prevent immediate re-trigger
+}
+
+// ============================================================================
+// MECHANIC 1: DRAG & DROP (Membrane Building)
+// ============================================================================
+function buildDragDrop(scene, elements) {
+    const instruction = scene.add.text(400, 120, "Drag the Phosphate Head to the Bilayer Gap!", { font: '16px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(instruction);
+
+    // Target Zone
+    const targetBox = scene.add.rectangle(400, 300, 80, 80, 0x334155).setStrokeStyle(2, 0xec4899);
+    const targetText = scene.add.text(400, 300, "Drop Here", { font: '12px Arial', fill: '#ec4899' }).setOrigin(0.5);
+    elements.push(targetBox, targetText);
+
+    // Draggable Element
+    const draggable = scene.add.circle(200, 300, 25, 0xec4899).setInteractive({ draggable: true });
+    const dragLabel = scene.add.text(200, 300, "Lipid", { font: '12px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(draggable, dragLabel);
+
+    draggable.on('drag', (pointer, dragX, dragY) => {
+        draggable.x = dragX;
+        draggable.y = dragY;
+        dragLabel.x = dragX;
+        dragLabel.y = dragY;
+    });
+
+    draggable.on('dragend', () => {
+        if (Phaser.Geom.Intersects.RectangleToRectangle(draggable.getBounds(), targetBox.getBounds())) {
+            draggable.x = 400;
+            draggable.y = 300;
+            dragLabel.x = 400;
+            dragLabel.y = 300;
+            instruction.setText("SUCCESS: Membrane repaired successfully!").setFill('#10b981');
+        }
+    });
+}
+
+// ============================================================================
+// MECHANIC 2: SEQUENCED PATHWAYS
+// ============================================================================
+function buildSequence(scene, elements) {
+    const instruction = scene.add.text(400, 120, "Click steps in order: 1. DNA Unzip -> 2. Transcription -> 3. Ribosome", { font: '14px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(instruction);
+
+    let userSequence = [];
+    const stepsData = [
+        { label: "Transcription", id: 2, x: 250, y: 280 },
+        { label: "DNA Unzip", id: 1, x: 400, y: 280 },
+        { label: "Ribosome Binding", id: 3, x: 550, y: 280 }
+    ];
+
+    const feedback = scene.add.text(400, 400, "Sequence: []", { font: '16px Arial', fill: '#38bdf8' }).setOrigin(0.5);
+    elements.push(feedback);
+
+    stepsData.forEach(step => {
+        const btn = scene.add.rectangle(step.x, step.y, 130, 50, 0x8b5cf6).setInteractive({ useHandCursor: true });
+        const txt = scene.add.text(step.x, step.y, step.label, { font: '12px Arial', fill: '#ffffff' }).setOrigin(0.5);
+        elements.push(btn, txt);
+
+        btn.on('pointerdown', () => {
+            userSequence.push(step.id);
+            feedback.setText("Sequence: [" + userSequence.join(" -> ") + "]");
+
+            if (userSequence.length === 3) {
+                if (JSON.stringify(userSequence) === JSON.stringify([1, 2, 3])) {
+                    feedback.setText("CORRECT SEQUENCE! Protein Synthesized!").setFill('#10b981');
+                } else {
+                    feedback.setText("WRONG SEQUENCE! Resetting...").setFill('#ef4444');
+                    userSequence = [];
+                }
+            }
+        });
+    });
+}
+
+// ============================================================================
+// MECHANIC 3: SLIDER BALANCING (Homeostasis)
+// ============================================================================
+function buildSlider(scene, elements) {
+    const instruction = scene.add.text(400, 120, "Adjust temperature to reach Optimal Enzyme Rate (37°C)", { font: '15px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(instruction);
+
+    let currentTemp = 10;
+    
+    const tempDisplay = scene.add.text(400, 220, "Current Temp: 10°C", { font: '24px Arial', fill: '#06b6d4' }).setOrigin(0.5);
+    const rateDisplay = scene.add.text(400, 270, "Enzyme Reaction Rate: LOW", { font: '18px Arial', fill: '#ef4444' }).setOrigin(0.5);
+    elements.push(tempDisplay, rateDisplay);
+
+    // Slider Controls
+    const btnDown = scene.add.rectangle(300, 350, 80, 40, 0x334155).setInteractive({ useHandCursor: true });
+    const btnDownTxt = scene.add.text(300, 350, "- 5°C", { font: '16px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    
+    const btnUp = scene.add.rectangle(500, 350, 80, 40, 0x334155).setInteractive({ useHandCursor: true });
+    const btnUpTxt = scene.add.text(500, 350, "+ 5°C", { font: '16px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(btnDown, btnDownTxt, btnUp, btnUpTxt);
+
+    function updateSim() {
+        tempDisplay.setText(`Current Temp: ${currentTemp}°C`);
+        if (currentTemp === 37 || currentTemp === 35) {
+            rateDisplay.setText("Enzyme Reaction Rate: OPTIMAL! (100%)").setFill('#10b981');
+        } else if (currentTemp > 50) {
+            rateDisplay.setText("Enzyme Reaction Rate: DENATURED! (0%)").setFill('#ef4444');
+        } else {
+            rateDisplay.setText("Enzyme Reaction Rate: SUB-OPTIMAL").setFill('#eab308');
+        }
+    }
+
+    btnDown.on('pointerdown', () => { currentTemp = Math.max(0, currentTemp - 5); updateSim(); });
+    btnUp.on('pointerdown', () => { currentTemp = Math.min(70, currentTemp + 5); updateSim(); });
+}
+
+// ============================================================================
+// MECHANIC 4: ENVIRONMENTAL PUZZLE
+// ============================================================================
+function buildEnvironmental(scene, elements) {
+    const instruction = scene.add.text(400, 120, "Trigger the Stomata Guard Cells using ATP to allow CO2 entry!", { font: '15px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(instruction);
+
+    const gate = scene.add.rectangle(400, 280, 200, 30, 0xef4444);
+    const gateLabel = scene.add.text(400, 280, "Stomata Closed (Blocking Gas)", { font: '14px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(gate, gateLabel);
+
+    const lever = scene.add.rectangle(400, 380, 180, 50, 0xeab308).setInteractive({ useHandCursor: true });
+    const leverTxt = scene.add.text(400, 380, "Pump K+ Ions (ATP)", { font: '14px Arial', fill: '#000000' }).setOrigin(0.5);
+    elements.push(lever, leverTxt);
+
+    lever.on('pointerdown', () => {
+        gate.setFillStyle(0x10b981);
+        gateLabel.setText("Stomata Open (Turgor Pressure High)");
+        instruction.setText("PUZZLE SOLVED: Photosynthesis resumed!").setFill('#10b981');
+    });
+}
+
+// ============================================================================
+// MECHANIC 5: SPOT THE ANOMALY
+// ============================================================================
+function buildSpotAnomaly(scene, elements) {
+    const instruction = scene.add.text(400, 120, "Click on the Sickle-Cell Anomaly in the blood tissue sample!", { font: '15px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(instruction);
+
+    // Normal Blood Cells
+    const positions = [{x: 250, y: 280}, {x: 350, y: 350}, {x: 550, y: 260}, {x: 480, y: 360}];
+    positions.forEach(pos => {
+        const cell = scene.add.circle(pos.x, pos.y, 30, 0xef4444).setInteractive();
+        elements.push(cell);
+        cell.on('pointerdown', () => {
+            instruction.setText("Incorrect: That is a normal biconcave erythrocyte.").setFill('#ef4444');
+        });
+    });
+
+    // Sickle Cell (The Anomaly)
+    const sickleCell = scene.add.ellipse(380, 250, 60, 20, 0x991b1b).setRotation(0.8).setInteractive({ useHandCursor: true });
+    elements.push(sickleCell);
+
+    sickleCell.on('pointerdown', () => {
+        sickleCell.setStrokeStyle(3, 0x10b981);
+        instruction.setText("CORRECT! Sickle Cell Detected (Hemoglobin Mutation)").setFill('#10b981');
+    });
+}
+
+// ============================================================================
+// MECHANIC 6: LOCK & KEY
+// ============================================================================
+function buildLockKey(scene, elements) {
+    const instruction = scene.add.text(400, 120, "Select the matching Substrate to bind with the Active Site!", { font: '15px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    elements.push(instruction);
+
+    // Active Site
+    const enzyme = scene.add.rectangle(400, 230, 120, 80, 0x84cc16);
+    const label = scene.add.text(400, 230, "Enzyme Active Site\n(Shape: SQUARE)", { font: '12px Arial', fill: '#000000', align: 'center' }).setOrigin(0.5);
+    elements.push(enzyme, label);
+
+    // Inventory Options
+    const options = [
+        { shape: "circle", name: "Glucose (Round)", correct: false, x: 250 },
+        { shape: "square", name: "Specific Substrate (Square)", correct: true, x: 400 },
+        { shape: "triangle", name: "Denatured Protein", correct: false, x: 570 }
+    ];
+
+    options.forEach(opt => {
+        const btn = scene.add.rectangle(opt.x, 380, 130, 50, 0x334155).setInteractive({ useHandCursor: true });
+        const txt = scene.add.text(opt.x, 380, opt.name, { font: '10px Arial', fill: '#ffffff', wordWrap: { width: 110 } }).setOrigin(0.5);
+        elements.push(btn, txt);
+
+        btn.on('pointerdown', () => {
+            if (opt.correct) {
+                instruction.setText("BINDING SUCCESSFUL: Enzyme-Substrate Complex Formed!").setFill('#10b981');
+            } else {
+                instruction.setText("BINDING FAILED: Shape does not complement active site!").setFill('#ef4444');
+            }
+        });
+    });
+}
+
+// ============================================================================
+// MECHANIC 7: DIAGNOSTIC INTERVIEW
+// ============================================================================
+function buildDialogue(scene, elements) {
+    const npcText = scene.add.text(400, 180, "NPC Farmer: 'My crop leaves are turning yellow and growth has stopped!'", { font: '14px Arial', fill: '#a855f7' }).setOrigin(0.5);
+    elements.push(npcText);
+
+    const q1 = scene.add.rectangle(400, 270, 500, 40, 0x334155).setInteractive({ useHandCursor: true });
+    const q1Txt = scene.add.text(400, 270, "Ask: 'Is the yellowing affecting old leaves or young leaves first?'", { font: '13px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    
+    const q2 = scene.add.rectangle(400, 330, 500, 40, 0x334155).setInteractive({ useHandCursor: true });
+    const q2Txt = scene.add.text(400, 330, "Diagnose: 'Spray them with extra water immediately!'", { font: '13px Arial', fill: '#ffffff' }).setOrigin(0.5);
+    
+    elements.push(q1, q1Txt, q2, q2Txt);
+
+    q1.on('pointerdown', () => {
+        npcText.setText("NPC Farmer: 'It affects the older leaves first! What deficiency is that?'");
+        q1Txt.setText("Diagnose: 'It is a Nitrogen Deficiency (Mobile Nutrient)'");
+        q2Txt.setText("Diagnose: 'It is an Iron Deficiency (Immobile Nutrient)'");
+
+        q1.off('pointerdown');
+        q1.on('pointerdown', () => {
+            npcText.setText("CORRECT DIAGNOSIS! Nitrogen fertilizer restored the crops!").setFill('#10b981');
+        });
+        q2.on('pointerdown', () => {
+            npcText.setText("INCORRECT DIAGNOSIS: Iron deficiency affects young leaves!").setFill('#ef4444');
+        });
+    });
+
+    q2.on('pointerdown', () => {
+        npcText.setText("NPC Farmer: 'Water didn't help, the plants drowned!'").setFill('#ef4444');
+    });
+}
+</script>
+
+</body>
+</html>
